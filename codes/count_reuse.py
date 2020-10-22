@@ -1,4 +1,4 @@
-from utils import Graph, calc_total_flops, calc_overlap_ratio, retrieve_net_info
+from reuse import Graph, calc_total_flops, calc_overlap_ratio, retrieve_net_info
 from detect import mdr_test
 import re
 import argparse
