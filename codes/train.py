@@ -322,7 +322,7 @@ def train(train_loader, model, criterion, optimizer, epoch, args):
             wstart = max(0, wp-1)
             wend   = min(width-1, wp+patch_size)
             images[bidx, :, hstart:hend+1, wstart:wend+1] = 0
-            # torchvision.utils.save_image(images[bidx, :, :, :], '{}.jpg'.format(bidx))
+            # torchvision.utils.save_image(images[bidx, :, :, :], '{}.jpg'.format(bidx), normalize=False)
 
         # measure data loading time
         data_time.update(time.time() - end)
@@ -384,7 +384,7 @@ def validate(val_loader, model, criterion, args):
                 wstart = max(0, wp-1)
                 wend   = min(width-1, wp+patch_size)
                 images[bidx, :, hstart:hend+1, wstart:wend+1] = 0
-                # torchvision.utils.save_image(images[bidx, :, :, :], '{}.jpg'.format(bidx))
+                # torchvision.utils.save_image(images[bidx, :, :, :], '{}.jpg'.format(bidx), normalize=False)
             if args.gpu is not None:
                 images = images.cuda(args.gpu, non_blocking=True)
             if torch.cuda.is_available():

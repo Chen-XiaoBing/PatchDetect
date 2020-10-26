@@ -263,8 +263,7 @@ class VGG16(nn.Module):
         return prob_grid, class_grid
 
 
-def mdr_vote(prob_grid, class_grid):
-    print(prob_grid.shape)
+def mdr_vote(prob_grid, class_grid, file_idx, prefix, logger=None):
     assert len(prob_grid.shape) == 2 and prob_grid.shape == class_grid.shape \
         and prob_grid.shape[0] > 2 and prob_grid.shape[1] > 2
 
@@ -275,33 +274,33 @@ def mdr_vote(prob_grid, class_grid):
             tprob = prob_grid[i:i+3, j:j+3]
             tcls  = class_grid[i:i+3, j:j+3]
             idx = np.argmin(tprob)
+
+            voting_grid[i, j] = tcls[idx//3, idx%3]
             for k in range(9):
-                if k == idx:
-                    continue
-                elif voting_grid[i, j] != -1 and tcls[k//3, k%3] != voting_grid[i, j]:
+                if tcls[k//3, k%3] != voting_grid[i, j]:
                     voting_grid[i, j] = -1
                     break
-                elif voting_grid[i, j] == -1:
-                    voting_grid[i, j] = tcls[k//3, k%3]
-                elif voting_grid[i, j] != -1 and tcls[k//3, k%3] == voting_grid[i, j]:
-                    continue
                 else:
-                    raise Exception('Unknown condition')
+                    continue
 
     freq = dict()
     for i in range(h-2):
         for j in range(w-2):
-            if voting_grid[i, j] == -1: continue
+            val = int(voting_grid[i, j])
+            if val == -1: continue
             else:
-                if voting_grid[i, j] in freq: freq[voting_grid[i, j]] += 1
-                else:                         freq[voting_grid[i, j]]  = 1
-    if len(freq.keys()) == 1: return freq[list(freq.keys())[0]]
+                if val in freq: freq[val] += 1
+                else:           freq[val]  = 1
+    if logger:
+        logger.info('freq: {}'.format(sorted(freq.items(), key = lambda kv:kv[1], reverse=True)))
+    else:
+        print('freq: ', sorted(freq.items(), key = lambda kv:kv[1], reverse=True))
+    if len(freq.keys()) == 1: return list(freq.keys())[0], voting_grid
     elif len(freq.keys()) == 2:
-        keys = freq.keys()
-        if freq[keys[0]] == 1: return keys[1]
-        else:                 return keys[0]
-    return -1
-
+        keys = list(freq.keys())
+        if freq[keys[0]] > freq[keys[1]]: return keys[1], voting_grid
+        else:                            return keys[0], voting_grid
+    return -1, voting_grid
 
 def mdr_test():
     batch_size = 1

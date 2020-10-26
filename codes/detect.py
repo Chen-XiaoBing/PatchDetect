@@ -1,126 +1,201 @@
 import os
-import math
-import argparse
-import numpy as np
 import logging
+import numpy as np
 
-import csv
 import torch
-import torchvision.transforms as transforms
-import torchvision.datasets as datasets
-import torch.backends.cudnn as cudnn
-import torchvision.models as models
-from torch.utils.data.sampler import SubsetRandomSampler
-from detect.occluded_vgg import mdr_vote
+import torch.nn.functional as F
 
-def init_args():
-    model_names = ['modebilenet_v2', 'resnet50', 'resnet152']
-    parser = argparse.ArgumentParser(description='MDR testing')
-    parser.add_argument('--patch-rate', default=0.1, type=float,
-                        help='patch to dataset')
-    parser.add_argument('--arch', metavar='ARCH', default='resnet50',
-                        choices=model_names, help='model architecture: ' +
-                        ' | '.join(model_names) + ' (default: resnet50)')
-    parser.add_argument('--ckpt', type=str, default='./data/models/resnet50_0.05/model_best.pth.tar')
-    args = parser.parse_args()
-    return args
+from freq_filter import get_condidate
 
-def get_logger(filename=None):
+def get_logger(filename):
     logger = logging.getLogger()
     logger.setLevel(logging.INFO)
-    # formatter = logging.Formatter(
-    #         "%(asctime)s - %(filename)s[line:%(lineno)d] - %(levelname)s: %(message)s")
-    formatter = logging.Formatter(
-            "%(asctime)s : %(message)s")
+
+    fh = logging.FileHandler(filename, mode='w')
+    fh.setLevel(logging.INFO)
+
     ch=logging.StreamHandler()
     ch.setLevel(logging.INFO)
-    ch.setFormatter(formatter)
-    logger.addHandler(ch)
 
-    if filename != None:
-        fh = logging.FileHandler(filename, mode='w')
-        fh.setLevel(logging.INFO)
-        fh.setFormatter(formatter)
-        logger.addHandler(fh)
+    formatter = logging.Formatter(
+            "%(message)s")
+    fh.setFormatter(formatter)
+    ch.setFormatter(formatter)
+
+    logger.addHandler(fh)
+    logger.addHandler(ch)
 
     return logger
 
-def gen_model(arch, ckpt):
-    model = models.__dict__[arch]().cuda()
-    ckpt = torch.load(ckpt)
-    if torch.cuda.device_count() > 1:
-        model = torch.nn.DataParallel(model)
-    model.load_state_dict(ckpt['state_dict'])
-    cudnn.benchmark = True
-    return model
+class Detector:
+    def __init__(self, file_dir, logger):
+        self.file_dir = file_dir
+        self.logger = logger
+        self.result = list()
+        files = os.listdir(self.file_dir)
 
-def run_mdr(model, image, patch_size, logger):
-    image = image.cuda()
+        self.file_dict = dict()
+        ori_img, pat_img, ori_mdr, pat_mdr = dict(), dict(), dict(), dict()
+        for item in files:
+            suffix_jpg     = item.endswith('.jpg')
+            suffix_mdr_pth = item.endswith('_mdr.pth')
+            prefix_ori     = item.startswith('ori_')
+            prefix_pat     = item.startswith('patched_')
 
-    image_size = image.size(3)
-    h_range = w_range = image_size - patch_size + 1
+            if suffix_mdr_pth and prefix_ori:
+                key = int(item.split('_')[3])
+                ori_mdr[key] = item
+            elif suffix_mdr_pth and prefix_pat:
+                key = int(item.split('_')[3])
+                pat_mdr[key] = item
+            elif suffix_jpg and prefix_ori:
+                key = int(item.split('_')[3])
+                ori_img[key] = item
+            elif suffix_jpg and prefix_pat:
+                key = int(item.split('_')[3])
+                pat_img[key] = item
 
-    prob_grid = np.zeros([h_range, w_range])
-    class_grid = np.zeros([h_range, w_range])
+        self.file_dict['ori_img'] = ori_img
+        self.file_dict['pat_img'] = pat_img
+        self.file_dict['ori_mdr'] = ori_mdr
+        self.file_dict['pat_mdr'] = pat_mdr
 
-    occl_mask_shape = list(image.size())
-    occl_mask_shape[0] = w_range
-    images = image.expand(occl_mask_shape)
-    for h in range(h_range):
-        occl_mask = np.ones(occl_mask_shape)
-        for w in range(w_range):
-            hstart = max(0, h-1)
-            hend   = min(image_size-1, h+patch_size)
-            wstart = max(0, w-1)
-            wend   = min(image_size-1, w+patch_size)
-            occl_mask[w, :, hstart:hend+1, wstart:wend+1] = 0
-        occl_mask = torch.FloatTensor(occl_mask).cuda()
-        masked_image = torch.mul(occl_mask, images)
-        output = model(masked_image)
-        prob, cls = torch.max(output, 1)
-        prob, cls = prob.cpu().detach().numpy(), cls.cpu().detach().numpy()
-        prob_grid[h, :], class_grid[h, :] = prob, cls
-    cls, voting_grid = mdr_vote(prob_grid, class_grid, 0, '', logger)
-    return prob_grid, class_grid, voting_grid, cls
+    def read_mdr(self, fname, key):
+        assert key in ['prob', 'cls', 'vote']
+        if '/' not in fname:
+            fname = os.path.join(self.file_dir, fname)
+        return torch.load(fname, map_location=torch.device('cpu'))[key]
+
+    def read_img(self, fname):
+        fname = os.path.join(self.file_dir, fname)
+        return torch.load(fname, map_location=torch.device('cpu')).numpy()
+
+    def get_patch_loc(self, idx):
+        ori_img = self.read_img(self.file_dict['ori_img'][idx])
+        pat_img = self.read_img(self.file_dict['pat_img'][idx])
+        diff = ori_img - pat_img
+        _, _, h, w = np.nonzero(diff)
+        return h.min(), w.min(), h.max()-h.min()+1, w.max()-w.min()+1
+
+    def detect(self, fimg, fmdr, thre, target=859, square_size=70):
+        cond_mat = get_condidate(fimg, thre=thre)
+        mdr_mat = self.read_mdr(fmdr, 'cls')
+        sparse_mdr_mat = np.zeros(mdr_mat.shape) - 1
+        # sparse_mdr_mat = 859
+        h, w = cond_mat.shape
+        for i in range(h):
+            for j in range(w):
+                if cond_mat[i, j] == 1:
+                    ti = min(max(0, i-35), 154)
+                    tj = min(max(0, j-35), 154)
+                    sparse_mdr_mat[ti, tj] = mdr_mat[ti, tj]
+
+        h, w = sparse_mdr_mat.shape
+        cond_nr  = np.zeros((h-square_size+1, w-square_size+1)).astype(int)
+        other_nr = np.zeros((h-square_size+1, w-square_size+1)).astype(int)
+
+        # for i in range(h-square_size+1):
+        #     for j in range(w-square_size+1):
+        #         t_cond_nr, t_other_nr = 0, 0
+        #         for ii in range(square_size):
+        #             for jj in range(square_size):
+        #                 if sparse_mdr_mat[i+ii, j+jj] != -1:
+        #                     t_cond_nr += 1
+        #                     if sparse_mdr_mat[i+ii, j+jj] != 859:
+        #                         t_other_nr += 1
+        #         cond_nr[i, j] = t_cond_nr
+        #         other_nr[i, j] = t_other_nr
+        for i in range(h-square_size+1):
+            for j in range(w-square_size+1):
+                if i == 0 and j == 0:
+                    t_cond_nr, t_other_nr = 0, 0
+                    for ii in range(square_size):
+                        for jj in range(square_size):
+                            if sparse_mdr_mat[i+ii, j+jj] != -1:
+                                t_cond_nr += 1
+                                if sparse_mdr_mat[i+ii, j+jj] != target:
+                                    t_other_nr += 1
+                    f_cond_nr, f_other_nr = t_cond_nr, t_other_nr
+                elif i != 0 and j == 0:
+                    for jj in range(square_size):
+                        if sparse_mdr_mat[i-1, jj] != -1:
+                            f_cond_nr -= 1
+                            if sparse_mdr_mat[i-1, jj] != target:
+                                f_other_nr -= 1
+                    for jj in range(square_size):
+                        if sparse_mdr_mat[i+square_size-1, jj] != -1:
+                            f_cond_nr += 1
+                            if sparse_mdr_mat[i+square_size-1, jj] != target:
+                                f_other_nr += 1
+                    t_cond_nr, t_other_nr = f_cond_nr, f_other_nr
+                else:
+                    for ii in range(square_size):
+                        if sparse_mdr_mat[i+ii, j+square_size-1] != -1:
+                            t_cond_nr += 1
+                            if sparse_mdr_mat[i+ii, j+square_size-1] != target:
+                                t_other_nr += 1
+                cond_nr[i, j], other_nr[i, j] = t_cond_nr, t_other_nr
+                for ii in range(square_size):
+                    if sparse_mdr_mat[i+ii, j] != -1:
+                        t_cond_nr -= 1
+                        if sparse_mdr_mat[i+ii, j] != target:
+                            t_other_nr -= 1
+
+        nr = np.count_nonzero(sparse_mdr_mat+1)
+
+        ind = np.unravel_index(np.argsort(cond_nr, axis=None), cond_nr.shape)
+        tcond_nr = cond_nr[ind[0][-1]][ind[1][-1]]
+        tother_nr = other_nr[ind[0][-1]][ind[1][-1]]
+        top = (tcond_nr, tother_nr, tcond_nr*1./nr, tother_nr*1./tcond_nr)
+        self.logger.info('sample: {}'.format(fimg))
+        self.logger.info('cond: {}, box: {}, other: {}, cond rate: {}, other label rate: {}'\
+                .format(nr, top[0], top[1], top[2], top[3]))
+        self.logger.info('')
+        # image_file condidate_number condidate_in_box
+        # other_label_in_box cond_rate other_label_rate
+        self.result.append((fimg, nr, top[0], top[1], top[2], top[3]))
+
+    def search_thre(self):
+        self.logger.info('Searching threshold..')
+        min_val, thre1, thre2, fpb, tnb = len(self.result), 0, 0, 0, 0
+        for ii in range(100):
+           for jj in range(100):
+               t1, t2 = 0.01*ii, 0.01*ii
+               fp, tn = 0, 0
+               for i in range(len(self.result)):
+                   if 'ori' in self.result[i][0] \
+                           and self.result[i][-2] > t1 \
+                           and self.result[i][-1] >= t2:
+                       fp += 1
+                   if 'patch' in self.result[i][0] \
+                           and (self.result[i][-2] <= t1 \
+                           or self.result[i][-1] < t2):
+                       tn += 1
+               if fp+tn < min_val:
+                   min_val, thre1, thre2, fpb, tnb = fp+tn, 0.01*ii, 0.01*jj, fp, tn
+               self.logger.info('thre1: {}, thre2: {}, fp: {}, tn: {}, total: {}'\
+                       .format(0.01*ii, 0.01*jj, fp, tn, (fp+tn)/len(self.result)))
+
+        self.logger.info('Best Result: thre1: {}, thre2: {}, fp: {}, tn: {}, total: {}'\
+                .format(thre1, thre2, fpb, tnb, (fpb+tnb)/len(self.result)))
+
 
 def main():
-    args = init_args()
-    logger = get_logger('log/image_detect_{}_{}'.format(args.arch, args.patch_rate))
-    model = gen_model(args.arch, args.ckpt).eval()
+    logger = get_logger('log/detect_log')
+    detector = Detector('./data/attack_pic', logger)
 
-    total_nr, succ_nr = 0, 0
-    while True:
-        file_dir = 'data/attack_pic/'
-        # file_dir = 'data/attack_pic_2/'
-        files = [f for f in os.listdir(file_dir)]
-        for f in files:
-            # ori_resnet50_0.1_65_37.pth
-            if '_mdr' in f: continue
-            has_patch, arch, patch_rate, idx, label = (f[:-4]).split('_')
-            has_patch = (has_patch == 'patched')
-            patch_rate, idx, label = float(patch_rate), int(idx), int(label)
-            if not f.endswith('pth') or arch != args.arch or patch_rate != args.patch_rate:
-                continue
-            if f[:-4]+'_mdr.pth' in files:
-                continue
+    for i in range(10000):
+        if i in detector.file_dict['ori_mdr']:
+            img_file = os.path.join(detector.file_dir, detector.file_dict['ori_img'][i])
+            mdr_file = os.path.join(detector.file_dir, detector.file_dict['ori_mdr'][i])
+            target = int(img_file[:-4].split('_')[-1])
+            detector.detect(img_file, mdr_file, 200, target=target)
 
-            image = torch.load(os.path.join(file_dir, f))
-
-            image_size = image.size()[-1]
-            patch_size = int(math.sqrt(image_size*image_size*args.patch_rate))
-
-            prob_grid, class_grid, voting_grid, pred = run_mdr(model, image, patch_size, logger)
-            torch.save({'prob': prob_grid, 'cls': class_grid, 'vote': voting_grid},
-                    os.path.join(file_dir, f[:-4]+'_mdr.pth'))
-
-            if pred == label: succ_nr += 1
-            total_nr += 1
-
-            logger.info("file: {}, label: {}, pred: {}, ({}/{})".format(f, label, pred, succ_nr, total_nr))
+        if i in detector.file_dict['pat_mdr']:
+            img_file = os.path.join(detector.file_dir, detector.file_dict['pat_img'][i])
+            mdr_file = os.path.join(detector.file_dir, detector.file_dict['pat_mdr'][i])
+            detector.detect(img_file, mdr_file, 200, target=859)
+    detector.search_thre()
 
 if __name__ == '__main__':
     main()
-
-'''
-python detect/image_specific_mdr.py --arch resnet50 --patch-rate 0.1 --ckpt data/models/resnet50_0.1/model_best.pth.tar
-'''

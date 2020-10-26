@@ -222,8 +222,8 @@ def train(model, patch, data_loader, config):
         patch = new_patch
         if batch_idx % 100 == 99:
             config.logger.info('Train: success: {}, normal: {}, total: {}'.format(success, norm_total, total))
-        # torchvision.utils.save_image(images.data, 'data/attack/{}_ori.png'.format(batch_idx), normalize=True)
-        # torchvision.utils.save_image(adv_images.data, 'data/attack/{}_adv.png'.format(batch_idx), normalize=True)
+        # torchvision.utils.save_image(images.data, 'data/attack/{}_ori.png'.format(batch_idx), normalize=False)
+        # torchvision.utils.save_image(adv_images.data, 'data/attack/{}_adv.png'.format(batch_idx), normalize=False)
 
     config.logger.info("Train: Normal examples acc: %.3f" % (norm_total/total))
     config.logger.info("Train: Attack success rate: %.3f" % (success/total))

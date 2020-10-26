@@ -240,16 +240,16 @@ def main():
         adv_image = torch.clamp(adv_image, -2.117904, 2.64)
         saved_path = './data/attack/image_specific/patched_{}_{}_{}_{}.jpg'.\
                 format(args.arch, args.patch_rate, i, label.numpy()[0])
-        torchvision.utils.save_image(adv_image.data, saved_path)
+        torchvision.utils.save_image(adv_image.data, saved_path, normalize=False)
 
         saved_path = './data/attack/image_specific/ori_{}_{}_{}_{}.jpg'.\
                 format(args.arch, args.patch_rate, i, label.numpy()[0])
-        torchvision.utils.save_image(image.data, saved_path)
+        torchvision.utils.save_image(image.data, saved_path, normalize=False)
         adv_image = torch.mul(1-patch_mask, image) + torch.mul(patch_mask, padded_patch)
         adv_image = torch.clamp(adv_image, -2.117904, 2.64)
         saved_path = './data/attack/image_specific/patched_{}_{}_{}_{}.jpg'.\
                 format(args.arch, args.patch_rate, i, label.numpy()[0])
-        torchvision.utils.save_image(adv_image.data, saved_path)
+        torchvision.utils.save_image(adv_image.data, saved_path, normalize=False)
 
 
 if __name__ == '__main__':
