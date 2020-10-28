@@ -20,7 +20,8 @@ import torch.utils.data
 import torch.utils.data.distributed
 import torchvision.transforms as transforms
 import torchvision.datasets as datasets
-import torchvision.models as models
+# import torchvision.models as models
+import models
 import torchvision
 
 model_names = sorted(name for name in models.__dict__
@@ -28,11 +29,11 @@ model_names = sorted(name for name in models.__dict__
     and callable(models.__dict__[name]))
 
 parser = argparse.ArgumentParser(description='PyTorch ImageNet Training')
-parser.add_argument('-pr', '--patch-rate', default=0.08, type=float,
+parser.add_argument('-pr', '--patch_size', default=5, type=int,
                     help='patch to image')
-parser.add_argument('-d', '--data', metavar='DIR', default='./data',
+parser.add_argument('-d', '--data', metavar='DIR', default='~/work/wxz/data',
                     help='path to dataset')
-parser.add_argument('-a', '--arch', metavar='ARCH', default='resnet50',
+parser.add_argument('-a', '--arch', metavar='ARCH', default='ResNet18',
                     choices=model_names,
                     help='model architecture: ' +
                         ' | '.join(model_names) +
@@ -75,6 +76,8 @@ parser.add_argument('--seed', default=None, type=int,
                     help='seed for initializing training. ')
 parser.add_argument('--gpu', default=None, type=int,
                     help='GPU id to use.')
+parser.add_argument('--result', default="./result", type=str,
+                    help='Where to store the generated models and other result.')
 parser.add_argument('--multiprocessing-distributed', action='store_true',
                     help='Use multi-processing distributed training to launch '
                          'N processes per node, which has N GPUs. This is the '
@@ -88,7 +91,7 @@ logger = logging.getLogger()
 logger.setLevel(logging.INFO)
 
 os.system('mkdir -p log/train')
-logfile='log/train/train_{}_{}_log'.format(args.patch_rate, args.arch)
+logfile='log/train/train_{}_{}.log'.format(args.patch_size, args.arch)
 fh = logging.FileHandler(logfile, mode='w')
 fh.setLevel(logging.INFO)
 
@@ -159,7 +162,7 @@ def main_worker(gpu, ngpus_per_node, args):
         logger.info("=> using pre-trained model '{}'".format(args.arch))
         model = models.__dict__[args.arch](pretrained=True)
     else:
-        logger.info("=> using pre-trained model '{}'".format(args.arch))
+        # logger.info("=> using pre-trained model '{}'".format(args.arch))
         model = models.__dict__[args.arch]()
 
     if not torch.cuda.is_available():
@@ -225,20 +228,25 @@ def main_worker(gpu, ngpus_per_node, args):
     cudnn.benchmark = True
 
     # Data loading code
-    traindir = os.path.join(args.data, 'train')
-    valdir = os.path.join(args.data, 'val')
-    normalize = transforms.Normalize(mean=[0.485, 0.456, 0.406],
-                                     std=[0.229, 0.224, 0.225])
-
-    train_dataset = datasets.ImageFolder(
-        traindir,
-        transforms.Compose([
-            transforms.RandomResizedCrop(224),
-            transforms.RandomHorizontalFlip(),
-            transforms.ToTensor(),
-            normalize,
-        ]))
-
+    
+    # The mean and std constant is for Cifar10
+    normalize = transforms.Normalize(mean=[0.4914, 0.4822, 0.4465],
+                                     std=[0.2023, 0.1994, 0.2010])
+    transform_train = transforms.Compose([
+        transforms.RandomCrop(32, padding=4),
+        transforms.RandomHorizontalFlip(),
+        transforms.ToTensor(),
+        normalize,])
+    transform_test = transforms.Compose([
+        transforms.ToTensor(),
+        normalize,])
+    train_dataset = datasets.CIFAR10(
+        root=args.data,train=True,
+        download=True, transform=transform_train,)
+    test_dataset = datasets.CIFAR10(
+        root=args.data, train=False,
+        download=True, transform=transform_test,)
+    
     if args.distributed:
         train_sampler = torch.utils.data.distributed.DistributedSampler(train_dataset)
     else:
@@ -249,12 +257,7 @@ def main_worker(gpu, ngpus_per_node, args):
         num_workers=args.workers, pin_memory=True, sampler=train_sampler)
 
     val_loader = torch.utils.data.DataLoader(
-        datasets.ImageFolder(valdir, transforms.Compose([
-            transforms.Resize(256),
-            transforms.CenterCrop(224),
-            transforms.ToTensor(),
-            normalize,
-        ])),
+        test_dataset,
         batch_size=args.batch_size, shuffle=False,
         num_workers=args.workers, pin_memory=True)
 
@@ -280,9 +283,9 @@ def main_worker(gpu, ngpus_per_node, args):
         if not args.multiprocessing_distributed or (args.multiprocessing_distributed
                 and args.rank % ngpus_per_node == 0):
             os.system('mkdir -p {}/models/{}_{}/checkpoints/'.format(
-                args.data, args.arch, args.patch_rate))
+                args.result, args.arch, args.patch_size))
             ckpt_filename = '{}/models/{}_{}/checkpoints/epoch_{}_checkpoint.pth.tar'.format(
-                    args.data, args.arch, args.patch_rate, epoch)
+                    args.result, args.arch, args.patch_size, epoch)
             print(ckpt_filename)
             save_checkpoint({
                 'epoch': epoch + 1,
@@ -311,7 +314,8 @@ def train(train_loader, model, criterion, optimizer, epoch, args):
     for i, (images, target) in enumerate(train_loader):
         # occlusion
         batch_size, _, height, width = images.size()
-        patch_size = int(math.sqrt(args.patch_rate*height*width))
+        # patch_size = int(math.sqrt(args.patch_size*height*width))
+        patch_size = args.patch_size
         for bidx in range(batch_size):
             # patch position
             hp = random.randint(0, height-patch_size+1)
@@ -336,7 +340,7 @@ def train(train_loader, model, criterion, optimizer, epoch, args):
         output = model(images)
         loss = criterion(output, target)
 
-        # measure accuracy and record loss
+        # measure accuracy and record loss  
         acc1, acc5 = accuracy(output, target, topk=(1, 5))
         losses.update(loss.item(), images.size(0))
         top1.update(acc1[0], images.size(0))
@@ -373,7 +377,8 @@ def validate(val_loader, model, criterion, args):
         for i, (images, target) in enumerate(val_loader):
             # occlusion
             batch_size, _, height, width = images.size()
-            patch_size = int(math.sqrt(args.patch_rate*height*width))
+            # patch_size = int(math.sqrt(args.patch_size*height*width))
+            patch_size = args.patch_size
             for bidx in range(batch_size):
                 # patch position
                 hp = random.randint(0, height-patch_size+1)
@@ -417,7 +422,7 @@ def validate(val_loader, model, criterion, args):
 def save_checkpoint(state, is_best, filename='checkpoint.pth.tar'):
     torch.save(state, filename)
     if is_best:
-        dst_name = '{}/models/{}_{}/model_best.pth.tar'.format(args.data, args.arch, args.patch_rate)
+        dst_name = '{}/models/{}_{}/model_best.pth.tar'.format(args.result, args.arch, args.patch_size)
         # shutil.copyfile(filename, 'model_best.pth.tar')
         shutil.copyfile(filename, dst_name)
 
