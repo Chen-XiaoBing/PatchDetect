@@ -105,7 +105,7 @@ def init_env():
     return args
 
 
-def get_dataloader(image_size, data_path, train_size, test_size, batch_size):
+def get_dataloader(image_size, data_path, train_size, test_sizee):
     
     normalize = transforms.Normalize(mean=[0.4914, 0.4822, 0.4465],
                                      std=[0.2023, 0.1994, 0.2010])
@@ -124,10 +124,10 @@ def get_dataloader(image_size, data_path, train_size, test_size, batch_size):
         root=data_path, train=False,
         download=True, transform=transform_test,)
     train_loader = torch.utils.data.DataLoader(
-        train_dataset, batch_size=batch_size, shuffle=True,
+        train_dataset, batch_size=1, shuffle=True,
         num_workers=8, pin_memory=True)
     val_loader = torch.utils.data.DataLoader(
-        test_dataset,batch_size=batch_size, shuffle=False,
+        test_dataset,batch_size=1, shuffle=False,
         num_workers=8, pin_memory=True)
     
     return train_loader, val_loader
@@ -191,20 +191,19 @@ def add_zeromask(images, patch_size):
 
 
 def main():
-    if False:
-        min_val, max_val = 10., 0.
-        min_val, max_val = get_input_range('data/train/', min_val, max_val)
-        min_val, max_val = get_input_range('data/val/', min_val, max_val)
-        print(min_val, max_val)
-        
-    # In cifar, min_val = -2.429, max_val = 2.754
     args = init_env()
     os.makedirs('log/attack/image_specific',exist_ok=True)
     logger = get_logger(
         'log/attack/image_specific/{}_{}.log'.format(args.arch, args.patch_size))
     model = create_model(args.arch, args.ckpt).cuda().eval()
+    
     _, data_loader = get_dataloader(
-        args.image_size, args.data, args.train_size, args.test_size,args.batch_size)
+        args.image_size, args.data, args.train_size, args.test_size)
+    if False:
+        min_val, max_val = 10., 0.
+        min_val, max_val = get_input_range(data_loader)
+        print(min_val, max_val)
+    # In cifar, min_val = -2.429, max_val = 2.754
 
     config = AttackConfig(args.image_size, args.conf, logger,
                           args.target, args.max_count, args.test_size, args.train_size, args.batch_size)
