@@ -29,7 +29,7 @@ model_names = sorted(name for name in models.__dict__
     and callable(models.__dict__[name]))
 
 parser = argparse.ArgumentParser(description='PyTorch ImageNet Training')
-parser.add_argument('-pr', '--patch_size', default=5, type=int,
+parser.add_argument('-pr', '--patch_size', default=7, type=int,
                     help='patch to image')
 parser.add_argument('-d', '--data', metavar='DIR', default='~/work/wxz/data',
                     help='path to dataset')

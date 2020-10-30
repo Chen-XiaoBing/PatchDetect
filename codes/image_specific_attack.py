@@ -83,21 +83,21 @@ def init_env():
     parser.add_argument('--seed', type=int, default=1338)
     parser.add_argument('--data', metavar='DIR', default='~/work/wxz/data')
     parser.add_argument(
-        '--ckpt', type=str, default='./result/models/ResNet18_5/model_best.pth.tar')
+        '--ckpt', type=str, default='./result/models/ResNet18_7/model_best.pth.tar')
     parser.add_argument('--train_size', type=int,
                         default=10000, help='Number of training images')
     parser.add_argument('--test_size', type=int,
                         default=10000, help='Number of test images')
     parser.add_argument('--image_size', type=int, default=32)
-    parser.add_argument('--patch_size', default=5, type=int)
+    parser.add_argument('--patch_size', type=int, default=7)
     parser.add_argument('--epochs', type=int, default=20)
     parser.add_argument('--target', type=int, default=5,
                         help='In Cifar, The target class: 5 == dog')
     parser.add_argument('--conf', type=float, default=0.9,
                         help='Stop attack on image when target classifier reaches this value for target class')
     # parser.add_argument('--max-count', type=int, default=30*256)
-    parser.add_argument('--max-count', type=int, default=100*256)
-    parser.add_argument('--batch-size', type=int, default=256)
+    parser.add_argument('--max-count', type=int, default=200*256)
+    parser.add_argument('--batch-size', type=int, default=512)
     args = parser.parse_args()
 
     init_seed(args.seed)
@@ -106,19 +106,19 @@ def init_env():
 
 
 def get_dataloader(image_size, data_path, train_size, test_sizee):
-    
+
     normalize = transforms.Normalize(mean=[0.4914, 0.4822, 0.4465],
                                      std=[0.2023, 0.1994, 0.2010])
     transform_train = transforms.Compose([
         transforms.RandomCrop(32, padding=4),
         transforms.RandomHorizontalFlip(),
         transforms.ToTensor(),
-        normalize,])
+        normalize, ])
     transform_test = transforms.Compose([
         transforms.ToTensor(),
-        normalize,])
+        normalize, ])
     train_dataset = datasets.CIFAR10(
-        root=data_path,train=True,
+        root=data_path, train=True,
         download=True, transform=transform_train,)
     test_dataset = datasets.CIFAR10(
         root=data_path, train=False,
@@ -127,12 +127,13 @@ def get_dataloader(image_size, data_path, train_size, test_sizee):
         train_dataset, batch_size=1, shuffle=True,
         num_workers=8, pin_memory=True)
     val_loader = torch.utils.data.DataLoader(
-        test_dataset,batch_size=1, shuffle=False,
+        test_dataset, batch_size=1, shuffle=False,
         num_workers=8, pin_memory=True)
-    
+
     return train_loader, val_loader
 
-def get_input_range(dataloader:torch.utils.data.DataLoader):
+
+def get_input_range(dataloader: torch.utils.data.DataLoader):
     pre_max = 1
     pre_min = 0
     for i in range(len(dataloader.dataset)):
@@ -142,10 +143,11 @@ def get_input_range(dataloader:torch.utils.data.DataLoader):
             pre_min = dataloader.dataset[i][0].min()
     return pre_min, pre_max
 
+
 def init_patch(image_size, patch_size):
     image_size = image_size**2
     noise_size = image_size*patch_size
-    noise_dim = int(noise_size**(0.5))
+    noise_dim = patch_size
     # patch = np.random.rand(1, 3, noise_dim, noise_dim)
     patch = np.zeros((1, 3, noise_dim, noise_dim)) + 0.5
     return patch
@@ -192,11 +194,11 @@ def add_zeromask(images, patch_size):
 
 def main():
     args = init_env()
-    os.makedirs('log/attack/image_specific',exist_ok=True)
+    os.makedirs('log/attack/image_specific', exist_ok=True)
     logger = get_logger(
         'log/attack/image_specific/{}_{}.log'.format(args.arch, args.patch_size))
     model = create_model(args.arch, args.ckpt).cuda().eval()
-    
+
     _, data_loader = get_dataloader(
         args.image_size, args.data, args.train_size, args.test_size)
     if False:
@@ -206,15 +208,16 @@ def main():
     # In cifar, min_val = -2.429, max_val = 2.754
 
     config = AttackConfig(args.image_size, args.conf, logger,
-                          args.target, args.max_count, args.test_size, args.train_size, args.batch_size)
+                          args.target, args.max_count, args.test_size,
+                          args.train_size, args.batch_size)
 
     for i, (image, label) in enumerate(data_loader):
         patch = init_patch(args.image_size, args.patch_size)
         data_shape = image.size()
         patch_size = patch.shape[-1]
         image_size = args.image_size
-        
-        pdb.set_trace()
+
+        # pdb.set_trace()
 
         padded_patch, patch_mask, rand_h, rand_w = \
             square_transform(patch, data_shape, patch_size, image_size)
@@ -235,6 +238,7 @@ def main():
             expand_adv_image = adv_image.expand([batch_size, 3, 32, 32])
 
             occlude_mask = np.ones([batch_size, 3, 32, 32])
+            # add adv_patch to the image in different location
             for bidx in range(batch_size):
                 hp = random.randint(0, image_size-2*patch_size+1)
                 if hp > rand_h-patch_size/2:
@@ -255,6 +259,9 @@ def main():
 
             adv_out = F.log_softmax(model(occlude_image))
             adv_out_probs, adv_out_labels = adv_out.max(1)
+
+            if iter_num == config.max_count/batch_size - 1:
+                logger.info("%s,%s" % (adv_out_labels[0:9], label))
             loss = -torch.sum(adv_out[:, args.target])
             loss.backward()
             adv_grad = adv_image.grad.clone()
@@ -265,32 +272,44 @@ def main():
                 logger.info('image idx: {}, iter: {}, loss: {}'.format(
                     i, iter_num, loss))
 
-        saved_path = './result/attack/image_specific/ori_{}_{}_{}_{}.pth'.\
-            format(args.arch, args.patch_size, i, label.numpy()[0])
+        ori_path = './result/attack/image_specific/{}/{}_{}/ori'.format(
+            args.arch, args.arch, args.patch_size)
+        os.makedirs(ori_path, exist_ok=True)
+        patched_path = './result/attack/image_specific/{}/{}_{}/patched'.format(
+            args.arch, args.arch, args.patch_size)
+        os.makedirs(patched_path, exist_ok=True)
+
+        saved_path = '{}/ori_{}_{}_{}_{}.pth'.\
+            format(ori_path, args.arch, args.patch_size, i, label.numpy()[0])
         torch.save(image.data, saved_path)
         adv_image = torch.mul(1-patch_mask, image) + \
             torch.mul(patch_mask, padded_patch)
         adv_image = torch.clamp(adv_image, -2.429, 2.754)
-        saved_path = './result/attack/image_specific/patched_{}_{}_{}_{}.pth'.\
-            format(args.arch, args.patch_size, i, label.numpy()[0])
+
+        saved_path = '{}/patched_{}_{}_{}_{}.pth'.\
+            format(patched_path, args.arch,
+                   args.patch_size, i, label.numpy()[0])
         torch.save(adv_image.data, saved_path)
 
         adv_image = torch.mul(1-patch_mask, image) + \
             torch.mul(patch_mask, padded_patch)
         adv_image = torch.clamp(adv_image, -2.429, 2.754)
-        saved_path = './result/attack/image_specific/patched_{}_{}_{}_{}.jpg'.\
-            format(args.arch, args.patch_size, i, label.numpy()[0])
+        saved_path = '{}/patched_{}_{}_{}_{}.jpg'.\
+            format(patched_path, args.arch,
+                   args.patch_size, i, label.numpy()[0])
         torchvision.utils.save_image(
             adv_image.data, saved_path, normalize=False)
 
-        saved_path = './result/attack/image_specific/ori_{}_{}_{}_{}.jpg'.\
-            format(args.arch, args.patch_size, i, label.numpy()[0])
+        saved_path = '{}/ori_{}_{}_{}_{}.jpg'.\
+            format(ori_path, args.arch, args.patch_size, i, label.numpy()[0])
         torchvision.utils.save_image(image.data, saved_path, normalize=False)
         adv_image = torch.mul(1-patch_mask, image) + \
             torch.mul(patch_mask, padded_patch)
         adv_image = torch.clamp(adv_image, -2.429, 2.754)
-        saved_path = './result/attack/image_specific/patched_{}_{}_{}_{}.jpg'.\
-            format(args.arch, args.patch_size, i, label.numpy()[0])
+
+        saved_path = '{}/patched_{}_{}_{}_{}.jpg'.\
+            format(patched_path, args.arch,
+                   args.patch_size, i, label.numpy()[0])
         torchvision.utils.save_image(
             adv_image.data, saved_path, normalize=False)
 

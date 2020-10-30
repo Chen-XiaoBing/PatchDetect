@@ -21,6 +21,9 @@ python codes/image_specific_attack.py --arch resnet50 --ckpt data/models/resnet5
 # # find condidate positions
 # python codes/find_condidate.py
 
+# compute the adversarial examples attack accuracy
+python compute_adv_acc.py
+
 # detect
 python codes/generate_mdr.py --arch resnet50 --patch-rate 0.1 --ckpt data/models/resnet50_0.1/model_best.pth.tar
 python codes/detect.py
