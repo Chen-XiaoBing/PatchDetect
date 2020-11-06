@@ -191,6 +191,14 @@ def add_zeromask(images, patch_size):
     masked_images[:, :, hstart:hend+1, wstart:wend+1] = 0
     return masked_images
 
+def TotalVariation(adv_patch):
+    # pdb.set_trace()
+    tvcomp1 = torch.sum(torch.abs(adv_patch[:, :, 1:] - adv_patch[:, :, :-1]+0.000001),0)
+    tvcomp1 = torch.sum(torch.sum(tvcomp1,0),0)
+    tvcomp2 = torch.sum(torch.abs(adv_patch[:, 1:, :] - adv_patch[:, :-1, :]+0.000001),0)
+    tvcomp2 = torch.sum(torch.sum(tvcomp2,0),0)
+    tv = tvcomp1 + tvcomp2
+    return sum(tv/torch.numel(adv_patch))
 
 def main():
     args = init_env()
@@ -262,7 +270,8 @@ def main():
 
             if iter_num == config.max_count/batch_size - 1:
                 logger.info("%s,%s" % (adv_out_labels[0:9], label))
-            loss = -torch.sum(adv_out[:, args.target])
+            # pdb.set_trace()
+            loss = -torch.mean(adv_out[:, args.target]) + TotalVariation(padded_patch)
             loss.backward()
             adv_grad = adv_image.grad.clone()
             adv_image.grad.data.zero_()
