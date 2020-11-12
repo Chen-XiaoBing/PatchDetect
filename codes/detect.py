@@ -1,4 +1,5 @@
 import os
+import pdb
 import logging
 import numpy as np
 
@@ -6,26 +7,7 @@ import torch
 import torch.nn.functional as F
 
 from freq_filter import get_condidate
-
-def get_logger(filename):
-    logger = logging.getLogger()
-    logger.setLevel(logging.INFO)
-
-    fh = logging.FileHandler(filename, mode='w')
-    fh.setLevel(logging.INFO)
-
-    ch=logging.StreamHandler()
-    ch.setLevel(logging.INFO)
-
-    formatter = logging.Formatter(
-            "%(message)s")
-    fh.setFormatter(formatter)
-    ch.setFormatter(formatter)
-
-    logger.addHandler(fh)
-    logger.addHandler(ch)
-
-    return logger
+from mylogger import get_mylogger
 
 class Detector:
     def __init__(self, file_dir, logger):
@@ -91,6 +73,7 @@ class Detector:
                     sparse_mdr_mat[ti, tj] = mdr_mat[ti, tj]
 
         h, w = sparse_mdr_mat.shape
+        pdb.set_trace()
         cond_nr  = np.zeros((h-square_size+1, w-square_size+1)).astype(int)
         other_nr = np.zeros((h-square_size+1, w-square_size+1)).astype(int)
 
@@ -181,8 +164,8 @@ class Detector:
 
 
 def main():
-    logger = get_logger('log/detect_log')
-    detector = Detector('./data/attack_pic', logger)
+    logger = get_mylogger('log/detect_log')
+    detector = Detector('./result/attack/image_specific/ResNet18/ResNet18_10/', logger)
 
     for i in range(10000):
         if i in detector.file_dict['ori_mdr']:
@@ -194,7 +177,7 @@ def main():
         if i in detector.file_dict['pat_mdr']:
             img_file = os.path.join(detector.file_dir, detector.file_dict['pat_img'][i])
             mdr_file = os.path.join(detector.file_dir, detector.file_dict['pat_mdr'][i])
-            detector.detect(img_file, mdr_file, 200, target=859)
+            detector.detect(img_file, mdr_file, 200, target=5)
     detector.search_thre()
 
 if __name__ == '__main__':

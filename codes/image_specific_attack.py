@@ -83,13 +83,13 @@ def init_env():
     parser.add_argument('--seed', type=int, default=1338)
     parser.add_argument('--data', metavar='DIR', default='~/work/wxz/data')
     parser.add_argument(
-        '--ckpt', type=str, default='./result/models/ResNet18_7/model_best.pth.tar')
+        '--ckpt', type=str, default='./result/models/ResNet18_5/model_best.pth.tar')
     parser.add_argument('--train_size', type=int,
                         default=10000, help='Number of training images')
     parser.add_argument('--test_size', type=int,
                         default=10000, help='Number of test images')
     parser.add_argument('--image_size', type=int, default=32)
-    parser.add_argument('--patch_size', type=int, default=7)
+    parser.add_argument('--patch_size', type=int, default=5)
     parser.add_argument('--epochs', type=int, default=20)
     parser.add_argument('--target', type=int, default=5,
                         help='In Cifar, The target class: 5 == dog')
@@ -271,7 +271,7 @@ def main():
             if iter_num == config.max_count/batch_size - 1:
                 logger.info("%s,%s" % (adv_out_labels[0:9], label))
             # pdb.set_trace()
-            loss = -torch.mean(adv_out[:, args.target]) + TotalVariation(padded_patch)
+            loss = -torch.mean(adv_out[:, args.target])
             loss.backward()
             adv_grad = adv_image.grad.clone()
             adv_image.grad.data.zero_()
@@ -281,12 +281,12 @@ def main():
                 logger.info('image idx: {}, iter: {}, loss: {}'.format(
                     i, iter_num, loss))
 
-        ori_path = './result/attack/image_specific/{}/{}_{}/ori'.format(
+        ori_path = './result/attack/image_specific/{}/{}_{}'.format(
             args.arch, args.arch, args.patch_size)
         os.makedirs(ori_path, exist_ok=True)
-        patched_path = './result/attack/image_specific/{}/{}_{}/patched'.format(
-            args.arch, args.arch, args.patch_size)
-        os.makedirs(patched_path, exist_ok=True)
+        # patched_path = './result/attack/image_specific/{}/{}_{}/patched'.format(
+        #     args.arch, args.arch, args.patch_size)
+        # os.makedirs(patched_path, exist_ok=True)
 
         saved_path = '{}/ori_{}_{}_{}_{}.pth'.\
             format(ori_path, args.arch, args.patch_size, i, label.numpy()[0])
@@ -296,7 +296,7 @@ def main():
         adv_image = torch.clamp(adv_image, -2.429, 2.754)
 
         saved_path = '{}/patched_{}_{}_{}_{}.pth'.\
-            format(patched_path, args.arch,
+            format(ori_path, args.arch,
                    args.patch_size, i, label.numpy()[0])
         torch.save(adv_image.data, saved_path)
 
@@ -304,7 +304,7 @@ def main():
             torch.mul(patch_mask, padded_patch)
         adv_image = torch.clamp(adv_image, -2.429, 2.754)
         saved_path = '{}/patched_{}_{}_{}_{}.jpg'.\
-            format(patched_path, args.arch,
+            format(ori_path, args.arch,
                    args.patch_size, i, label.numpy()[0])
         torchvision.utils.save_image(
             adv_image.data, saved_path, normalize=False)
@@ -317,7 +317,7 @@ def main():
         adv_image = torch.clamp(adv_image, -2.429, 2.754)
 
         saved_path = '{}/patched_{}_{}_{}_{}.jpg'.\
-            format(patched_path, args.arch,
+            format(ori_path, args.arch,
                    args.patch_size, i, label.numpy()[0])
         torchvision.utils.save_image(
             adv_image.data, saved_path, normalize=False)
