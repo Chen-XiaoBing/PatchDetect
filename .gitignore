@@ -146,3 +146,4 @@ dmypy.json
 
 codes/log
 codes/result
+tmp/

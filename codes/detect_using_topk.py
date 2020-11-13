@@ -22,9 +22,11 @@ class Configuration():
             self.PATCH_SIZE)
         self.MODEL_NAME = './result/models/{}_{}/model_best.pth.tar'.format(
             self.ARCH, self.PATCH_SIZE)
-        self.TOPK = 14
+        self.TOPK = 9
         self.TOPK_ALPHA1 = 0.95
+        self.TOPK_ALPHA2 = 0.5
         self.BOX_SIZE = self.PATCH_SIZE + 2
+        self.TARGET_LABLE = 5
 
 
 def euclidean_dist(x, y):
@@ -53,10 +55,10 @@ def collect_images(filedir, filenum):
 
 
 def detect_patch(topk_map, mdr_file, unoccluded_cls, config):
-    
+
     cls_grid = mdr_file['cls']
 
-    _, h, w = out.size()
+    _, _, w = out.size()
     val, idx = out.view(-1).max(0)
     val = val.cpu().detach().numpy()
     idx = idx.cpu().detach().numpy()
@@ -65,6 +67,7 @@ def detect_patch(topk_map, mdr_file, unoccluded_cls, config):
     has_patch = "False"
     original_cls = unoccluded_cls
     if val >= config.TOPK_ALPHA1 * config.TOPK:
+    # if False:
         # pdb.set_trace()
         occl_cls = cls_grid[idx[0]][idx[1]]
         if occl_cls == unoccluded_cls:
@@ -73,28 +76,31 @@ def detect_patch(topk_map, mdr_file, unoccluded_cls, config):
         else:
             has_patch = "True"
             original_cls = occl_cls
-    # else:
-    #     # has_patch = 'else'
-    #     _, idx = torch.topk(out.view(-1),5)
-    #     # pdb.set_trace()
-    #     idx = idx.cpu().detach().numpy()
-    #     idx = [idx//w, idx % w]    
-        
-    #     occl_cls = []
-    #     for i in range(len(idx[0])):
-    #         # pdb.set_trace()
-    #         occl_cls.append(cls_grid[idx[0][i]][idx[1][i]])
-    #     collect_words = Counter(occl_cls)
-        
-    #     # all the occluded images predict the same label;
-    #     # so the image is benign.
-    #     if len(collect_words.keys()) == 1:
-    #         has_patch = "False"
-    #         original_cls = unoccluded_cls
-    #     else:
-    #         has_patch = "True"
-    #         # 取出现次数最少的标签
-    #         original_cls = list(collect_words.keys())[-1]
+    elif val <= config.TOPK * config.TOPK_ALPHA2:
+        has_patch = "False"
+        original_cls = unoccluded_cls
+    else:
+        _, idx = torch.topk(out.view(-1),5)
+        idx = idx.cpu().detach().numpy()
+        idx = [idx//w, idx % w]
+
+        occl_cls = []
+        for i in range(len(idx[0])):
+            # pdb.set_trace()
+            occl_cls.append(cls_grid[idx[0][i]][idx[1][i]])
+        pdb.set_trace()
+        collect_words = Counter(occl_cls)
+
+        # all the occluded images predict the same label;
+        # so the image is benign.
+        if len(collect_words.keys()) == 1:
+            has_patch = "False"
+            original_cls = unoccluded_cls
+        else:
+            has_patch = "True"
+            # 取出现次数最少的标签
+            original_cls = list(collect_words.keys())[-1]
+            
     return has_patch, original_cls
 
 
@@ -122,8 +128,8 @@ if __name__ == '__main__':
     np.set_printoptions(threshold=np.inf)
 
     total_num = 0
-    detect_num = 0
-    restore_num = 0
+    detect_fp, detect_fn, detect_tp, detect_tn = 0, 0, 0, 0
+    restore_patch, restore_benign = 0, 0
     tmp_num = 0
     for i in trange(config.FILENUM):
         # get those classified correctly images
@@ -135,6 +141,18 @@ if __name__ == '__main__':
         prob, cls = prob.cpu().detach().numpy(), cls.cpu().detach().numpy()
         true_label = int(re.split('_|\.', fimages['benign'][i])[-2])
         if true_label != cls:
+            continue
+
+        # 删去label 5
+        if true_label == 5:
+            continue
+        # get images that can attack precisely
+        fimg = os.path.join(config.FILEDIR, fimages['patch'][i])
+        img = torch.load(fimg[:-4]+'.pth').cuda()
+        output = model(img)
+        prob, cls = torch.max(output, 1)
+        prob, cls = prob.cpu().detach().numpy(), cls.cpu().detach().numpy()
+        if cls != config.TARGET_LABLE:
             continue
         total_num += 1
 
@@ -169,11 +187,18 @@ if __name__ == '__main__':
 
             # pdb.set_trace()
             if key == "patch" and has_patch == "True":
-                detect_num += 1
+                detect_tp += 1
+            if key == "patch" and has_patch == "False":
+                detect_fn += 1
+            if key == "benign" and has_patch == "True":
+                detect_fp += 1
+            if key == "benign" and has_patch == "False":
+                detect_tn += 1
+
             if key == "patch" and original_cls == true_label:
-                restore_num += 1
-            if key == "patch" and has_patch == 'else':
-                tmp_num += 1
-    logger.info("Detect Rate: %.3f \n Restore Rate: %.3f" %
-                (detect_num/total_num, restore_num/total_num))
-    logger.info("%d %d" % (total_num,tmp_num))
+                restore_patch += 1
+            if key == "benign" and original_cls == true_label:
+                restore_benign += 1
+    logger.info("Detect tp:%.3f fn:%.3f fp:%.3f tn:%.3f" %
+                (detect_tp/total_num, detect_fn/total_num, detect_fp/total_num, detect_tn/total_num))
+    logger.info("Restore patch:%.3f benign:%.3f" % (restore_patch/total_num, restore_benign/total_num))
