@@ -13,6 +13,7 @@ from mylogger import get_mylogger
 from collections import Counter
 
 
+
 class Configuration():
     def __init__(self):
         self.ARCH = "ResNet18"
@@ -22,9 +23,9 @@ class Configuration():
             self.PATCH_SIZE)
         self.MODEL_NAME = './result/models/{}_{}/model_best.pth.tar'.format(
             self.ARCH, self.PATCH_SIZE)
-        self.TOPK = 9
+        self.TOPK = 14
         self.TOPK_ALPHA1 = 0.95
-        self.TOPK_ALPHA2 = 0.5
+        self.TOPK_ALPHA2 = 0.3
         self.BOX_SIZE = self.PATCH_SIZE + 2
         self.TARGET_LABLE = 5
 
@@ -54,6 +55,31 @@ def collect_images(filedir, filenum):
     return fimages
 
 
+def nms(idx, config, threshold=0.4):
+    patch_size = config.PATCH_SIZE
+    if len(idx) == 1:
+        return idx
+    else:
+        nms_list = []
+        nms_list.append(idx[1])
+        for i in range(1, len(idx)):
+            should_be_stored = 0
+            for j in range(len(nms_list)):
+                delta_x = abs(idx[i][0] - nms_list[j][0])
+                delta_y = abs(idx[i][1] - nms_list[j][1])
+                if nms_list[j] != idx[i] and (delta_x >= patch_size or delta_y >= patch_size):
+                    should_be_stored += 1
+                    continue
+                overlap_area = (patch_size - delta_x) * (patch_size - delta_y)
+                overlap_ratio = overlap_area / (patch_size * patch_size)
+                if nms_list[j] != idx[i] and overlap_ratio <= threshold:
+                    should_be_stored += 1
+            # pdb.set_trace()
+            if should_be_stored == len(nms_list):
+                nms_list.append(idx[i])
+    return nms_list[:]
+
+
 def detect_patch(topk_map, mdr_file, unoccluded_cls, config):
 
     cls_grid = mdr_file['cls']
@@ -80,15 +106,25 @@ def detect_patch(topk_map, mdr_file, unoccluded_cls, config):
         has_patch = "False"
         original_cls = unoccluded_cls
     else:
-        _, idx = torch.topk(out.view(-1),5)
+        _, idx = torch.topk(out.view(-1), 5)
         idx = idx.cpu().detach().numpy()
-        idx = [idx//w, idx % w]
+        idx_list = []
+        for i in range(len(idx)):
+            idx_list.append((idx[i]//w, idx[i] % w))
+        # deepcopy, if wants shallowcopy, use `idx=idx_list`
+        idx = idx_list[:]
+        
+        # pdb.set_trace()
+        # idx = nms(idx, config)
+        
+        global calc_num 
+        calc_num += len(idx)
 
         occl_cls = []
-        for i in range(len(idx[0])):
+        for i in range(len(idx)):
             # pdb.set_trace()
-            occl_cls.append(cls_grid[idx[0][i]][idx[1][i]])
-        pdb.set_trace()
+            occl_cls.append(cls_grid[idx[i][0]][idx[i][1]])
+        # pdb.set_trace()
         collect_words = Counter(occl_cls)
 
         # all the occluded images predict the same label;
@@ -100,11 +136,14 @@ def detect_patch(topk_map, mdr_file, unoccluded_cls, config):
             has_patch = "True"
             # 取出现次数最少的标签
             original_cls = list(collect_words.keys())[-1]
-            
+
     return has_patch, original_cls
 
 
 if __name__ == '__main__':
+    
+    calc_num = 0
+
 
     config = Configuration()
 
@@ -118,6 +157,7 @@ if __name__ == '__main__':
     # TODO: .eval() is indispensable, otherwise the result goes wrong.
     model = models.__dict__[config.ARCH]().cuda().eval()
     model = torch.nn.DataParallel(model)
+
     model_file = './result/models/{}_{}/model_best.pth.tar'.format(
         config.ARCH, config.PATCH_SIZE)
     model.load_state_dict(torch.load(config.MODEL_NAME)['state_dict'])
@@ -201,4 +241,6 @@ if __name__ == '__main__':
                 restore_benign += 1
     logger.info("Detect tp:%.3f fn:%.3f fp:%.3f tn:%.3f" %
                 (detect_tp/total_num, detect_fn/total_num, detect_fp/total_num, detect_tn/total_num))
-    logger.info("Restore patch:%.3f benign:%.3f" % (restore_patch/total_num, restore_benign/total_num))
+    logger.info("Restore patch:%.3f benign:%.3f" %
+                (restore_patch/total_num, restore_benign/total_num))
+    logger.info("Candidate num:(no nms):%d" % calc_num)
