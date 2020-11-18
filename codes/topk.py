@@ -1,4 +1,5 @@
 import os
+import re
 import math
 import logging
 import numpy as np
@@ -38,9 +39,9 @@ if __name__ == '__main__':
     logger = get_mylogger("./log/detect_topk")
 
     arch = 'ResNet18'
-    patch_size = 10
+    patch_size = 7
     filenum = 10000
-    filedir = './result/attack/image_specific/ResNet18/ResNet18_10/'
+    filedir = './result/attack/image_specific/ResNet18/ResNet18_{}/'.format(patch_size)
 
     fimages = collect_images(filedir, filenum)
 
@@ -56,10 +57,33 @@ if __name__ == '__main__':
     keys = ['benign', 'patch']
     k_list = [(i+5) for i in range(50)] 
     np.set_printoptions(threshold=np.inf)
-    box_size = 12
+    box_size = patch_size + 2
     for k in k_list:
         count = {'benign': np.zeros(filenum), 'patch': np.zeros(filenum)}
         for i in range(filenum):
+            true_label = int(re.split('_|\.', fimages['benign'][i])[-2])
+            if true_label == 5:
+                continue
+            
+            # get those classified correctly images
+            fimg = os.path.join(filedir, fimages['benign'][i])
+            img = torch.load(fimg[:-4]+'.pth').cuda()
+            output = model(img)
+            prob, cls = torch.max(output, 1)
+            prob, cls = prob.cpu().detach().numpy(), cls.cpu().detach().numpy()
+            if true_label != cls:
+                continue
+            
+            # get images that can attack precisely
+            fimg = os.path.join(filedir, fimages['patch'][i])
+            img = torch.load(fimg[:-4]+'.pth').cuda()
+            output = model(img)
+            prob, cls = torch.max(output, 1)
+            prob, cls = prob.cpu().detach().numpy(), cls.cpu().detach().numpy()
+            # 5 is the targeted Label
+            if cls != 5:
+                continue
+            
             for key in keys:
                 fimg = os.path.join(filedir, fimages[key][i])
                 img = torch.load(fimg[:-4]+'.pth')

@@ -22,17 +22,7 @@ class Configuration():
             self.PATCH_SIZE)
         self.MODEL_NAME = './result/models/{}_{}/model_best.pth.tar'.format(
             self.ARCH, self.PATCH_SIZE)
-        self.TOPK = 14
-        self.TOPK_ALPHA1 = 0.7
-        self.TOPK_ALPHA2 = 0.3
-        self.BOX_SIZE = self.PATCH_SIZE + 2
         self.TARGET_LABLE = 5
-        self.NMS = False
-
-        # 【patch,benign]
-        self.method1 = [0, 0]
-        self.method2 = [0, 0]
-        self.method3 = [0, 0]
 
 
 def collect_images(filedir, filenum):
@@ -56,99 +46,51 @@ def collect_images(filedir, filenum):
     return fimages
 
 
-def nms(idx, config, threshold=0.4):
-    patch_size = config.PATCH_SIZE
-    if len(idx) == 1:
-        return idx
-    else:
-        nms_list = []
-        nms_list.append(idx[1])
-        for i in range(1, len(idx)):
-            should_be_stored = 0
-            for j in range(len(nms_list)):
-                delta_x = abs(idx[i][0] - nms_list[j][0])
-                delta_y = abs(idx[i][1] - nms_list[j][1])
-                if nms_list[j] != idx[i] and (delta_x >= patch_size or delta_y >= patch_size):
-                    should_be_stored += 1
+def mdr_vote(prob_grid, class_grid, file_idx='', prefix='', logger=None):
+    assert len(prob_grid.shape) == 2 and prob_grid.shape == class_grid.shape \
+        and prob_grid.shape[0] > 2 and prob_grid.shape[1] > 2
+
+    pdb.set_trace()
+    h, w = prob_grid.shape
+    voting_grid = -1*np.ones([h-2, w-2])
+    for i in range(h-2):
+        for j in range(w-2):
+            tprob = prob_grid[i:i+3, j:j+3]
+            tcls  = class_grid[i:i+3, j:j+3]
+            idx = np.argmin(tprob)
+
+            voting_grid[i, j] = tcls[idx//3, idx%3]
+            for k in range(9):
+                if tcls[k//3, k%3] != voting_grid[i, j]:
+                    voting_grid[i, j] = -1
+                    break
+                else:
                     continue
-                overlap_area = (patch_size - delta_x) * (patch_size - delta_y)
-                overlap_ratio = overlap_area / (patch_size * patch_size)
-                if nms_list[j] != idx[i] and overlap_ratio <= threshold:
-                    should_be_stored += 1
-            # pdb.set_trace()
-            if should_be_stored == len(nms_list):
-                nms_list.append(idx[i])
-    return nms_list[:]
 
-
-def detect_patch(topk_map, mdr_file, unoccluded_cls, config, key):
-
-    cls_grid = mdr_file['cls']
-
-    _, _, w = out.size()
-    val, idx = out.view(-1).max(0)
-    val = val.cpu().detach().numpy()
-    idx = idx.cpu().detach().numpy()
-    idx = [idx//w, idx % w]
-
-    has_patch = "False"
-    original_cls = unoccluded_cls
-    if val >= config.TOPK_ALPHA1 * config.TOPK:
-        # if False:
-        # pdb.set_trace()
-        occl_cls = cls_grid[idx[0]][idx[1]]
-        if occl_cls == unoccluded_cls:
-            has_patch = "False"
-            original_cls = unoccluded_cls
-            config.method1[1] += 1
-        else:
-            has_patch = "True"
-            original_cls = occl_cls
-            config.method1[0] += 1
-
-    elif val <= config.TOPK * config.TOPK_ALPHA2:
-        has_patch = "False"
-        original_cls = unoccluded_cls
-        config.method2[1] += 1
+    pdb.set_trace()
+    freq = dict()
+    for i in range(h-2):
+        for j in range(w-2):
+            val = int(voting_grid[i, j])
+            if val == -1: continue
+            else:
+                if val in freq: freq[val] += 1
+                else:           freq[val]  = 1
+    if logger:
+        logger.info('freq: {}'.format(sorted(freq.items(), key = lambda kv:kv[1], reverse=True)))
     else:
-        _, idx = torch.topk(out.view(-1), 5)
-        idx = idx.cpu().detach().numpy()
-        idx_list = []
-        for i in range(len(idx)):
-            idx_list.append((idx[i]//w, idx[i] % w))
-        # deepcopy, if wants shallowcopy, use `idx=idx_list`
-        idx = idx_list[:]
+        print('freq: ', sorted(freq.items(), key = lambda kv:kv[1], reverse=True))
+    if len(freq.keys()) == 1: return list(freq.keys())[0], voting_grid
+    elif len(freq.keys()) == 2:
+        keys = list(freq.keys())
+        if freq[keys[0]] > freq[keys[1]]: return keys[1], voting_grid
+        else:                            return keys[0], voting_grid
+    return -1, voting_grid
 
-        # pdb.set_trace()
-        if config.NMS == True:
-            idx = nms(idx, config)
-
-        global calc_num
-        calc_num += len(idx)
-
-        occl_cls = []
-        for i in range(len(idx)):
-            # pdb.set_trace()
-            occl_cls.append(cls_grid[idx[i][0]][idx[i][1]])
-        if key == "patch":
-            pdb.set_trace()
-        collect_words = Counter(occl_cls)
-
-        # all the occluded images predict the same label;
-        # so the image is benign.
-        if len(collect_words.keys()) == 1 and list(collect_words)[0] == unoccluded_cls:
-            has_patch = "False"
-            original_cls = unoccluded_cls
-            config.method3[1] += 1
-        else:
-            has_patch = "True"
-            # 取出现次数最少的标签
-            original_cls = list(collect_words.keys())[-1]
-            config.method3[0] += 1
-
+def detect_patch(vote_grid):
+    has_patch = "False"
+    original_cls = -1
     return has_patch, original_cls
-
-
 if __name__ == '__main__':
 
     calc_num = 0
@@ -156,14 +98,14 @@ if __name__ == '__main__':
     config = Configuration()
 
     # Set logger to record the process
-    logger = get_mylogger('./log/detect_topk/ResNet18_%d' % config.PATCH_SIZE)
+    logger = get_mylogger('./log/detect_mdr/ResNet18_%d' % config.PATCH_SIZE)
     logger.info("Parameters: %s" % (config.__dict__))
 
     # Get images
     fimages = collect_images(config.FILEDIR, config.FILENUM)
 
     # Load model
-    # TODO: .eval() is indispensable, otherwise the result goes wrong.
+    # .eval() is indispensable, otherwise the result goes wrong.
     model = models.__dict__[config.ARCH]().cuda().eval()
     model = torch.nn.DataParallel(model)
 
@@ -182,7 +124,6 @@ if __name__ == '__main__':
     tmp_num = 0
     for i in trange(config.FILENUM):
         # get those classified correctly images
-
         fimg = os.path.join(config.FILEDIR, fimages['benign'][i])
         benign_img = torch.load(fimg[:-4]+'.pth').cuda()
         output = model(benign_img)
@@ -219,25 +160,11 @@ if __name__ == '__main__':
                 img = poisoned_img
                 cls = poisoned_cls
             unoccluded_cls = cls
+            cls_grid = mdr_file['cls']
+            prob_grid = mdr_file['prob']
+            _, vote_grid = mdr_vote(prob_grid, cls_grid)
+            has_patch, original_cls = detect_patch(vote_grid)
 
-            # pdb.set_trace()
-            # # GoundTruth
-            # true_label = int(re.split('_|\.', fimg)[-2])
-
-            conv1 = model.bn1(model.conv1(img))
-            conv2d = torch.sum(conv1.squeeze(dim=0), dim=0)
-            h, w = conv2d.size()
-            _, idx = torch.topk(conv2d.view(-1), config.TOPK)
-            conv2d = conv2d.view(-1)
-            conv2d[:] = 0
-            conv2d[idx] = 1
-            conv2d = conv2d.view(1, h, w)
-            out = torch.nn.AvgPool2d(
-                (config.BOX_SIZE, config.BOX_SIZE), stride=(1, 1))(conv2d)
-            # Recover from average value
-            out = out * config.BOX_SIZE * config.BOX_SIZE
-            has_patch, original_cls = detect_patch(
-                out, mdr_file, unoccluded_cls, config, key)
 
             # pdb.set_trace()
             if key == "patch" and has_patch == "True":
@@ -259,6 +186,6 @@ if __name__ == '__main__':
                 (detect_tp/total_num, detect_fn/total_num, detect_fp/total_num, detect_tn/total_num))
     logger.info("Restore patch:%.3f benign:%.3f" %
                 (restore_patch/total_num, restore_benign/total_num))
-    logger.info("Candidate num:(nms: %s):%d" % (config.NMS, calc_num))
-    logger.info("[patch,benign]Method1:%s,Method2:%s,Method3:%s" %
-                (config.method1, config.method2, config.method3))
+    # logger.info("Candidate num:(nms: %s):%d" % (config.NMS, calc_num))
+    # logger.info("[patch,benign]Method1:%s,Method2:%s,Method3:%s" %
+    #             (config.method1, config.method2, config.method3))

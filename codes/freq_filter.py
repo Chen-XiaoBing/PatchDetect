@@ -88,6 +88,9 @@ def log_magnitude(img):
     return magnitude_spectrum
 
 def get_condidate(fimg, thre=200):
+    """
+        return grey images after filtering.
+    """
     img = cv2.imread(fimg)
     img = cv2.cvtColor(img, cv2.COLOR_BGR2GRAY)
 

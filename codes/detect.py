@@ -9,6 +9,7 @@ import torch.nn.functional as F
 from freq_filter import get_condidate
 from mylogger import get_mylogger
 
+
 class Detector:
     def __init__(self, file_dir, logger):
         self.file_dir = file_dir
@@ -19,10 +20,10 @@ class Detector:
         self.file_dict = dict()
         ori_img, pat_img, ori_mdr, pat_mdr = dict(), dict(), dict(), dict()
         for item in files:
-            suffix_jpg     = item.endswith('.jpg')
+            suffix_jpg = item.endswith('.jpg')
             suffix_mdr_pth = item.endswith('_mdr.pth')
-            prefix_ori     = item.startswith('ori_')
-            prefix_pat     = item.startswith('patched_')
+            prefix_ori = item.startswith('ori_')
+            prefix_pat = item.startswith('patched_')
 
             if suffix_mdr_pth and prefix_ori:
                 key = int(item.split('_')[3])
@@ -59,11 +60,12 @@ class Detector:
         _, _, h, w = np.nonzero(diff)
         return h.min(), w.min(), h.max()-h.min()+1, w.max()-w.min()+1
 
-    def detect(self, fimg, fmdr, thre, target=859, square_size=70):
+    def detect(self, fimg, fmdr, thre, target=5, square_size=70):
+        # pdb.set_trace()
         cond_mat = get_condidate(fimg, thre=thre)
         mdr_mat = self.read_mdr(fmdr, 'cls')
+        # -1 denotes invalid value
         sparse_mdr_mat = np.zeros(mdr_mat.shape) - 1
-        # sparse_mdr_mat = 859
         h, w = cond_mat.shape
         for i in range(h):
             for j in range(w):
@@ -73,8 +75,8 @@ class Detector:
                     sparse_mdr_mat[ti, tj] = mdr_mat[ti, tj]
 
         h, w = sparse_mdr_mat.shape
-        pdb.set_trace()
-        cond_nr  = np.zeros((h-square_size+1, w-square_size+1)).astype(int)
+        # pdb.set_trace()
+        cond_nr = np.zeros((h-square_size+1, w-square_size+1)).astype(int)
         other_nr = np.zeros((h-square_size+1, w-square_size+1)).astype(int)
 
         # for i in range(h-square_size+1):
@@ -131,8 +133,8 @@ class Detector:
         tother_nr = other_nr[ind[0][-1]][ind[1][-1]]
         top = (tcond_nr, tother_nr, tcond_nr*1./nr, tother_nr*1./tcond_nr)
         self.logger.info('sample: {}'.format(fimg))
-        self.logger.info('cond: {}, box: {}, other: {}, cond rate: {}, other label rate: {}'\
-                .format(nr, top[0], top[1], top[2], top[3]))
+        self.logger.info('cond: {}, box: {}, other: {}, cond rate: {}, other label rate: {}'
+                         .format(nr, top[0], top[1], top[2], top[3]))
         self.logger.info('')
         # image_file condidate_number condidate_in_box
         # other_label_in_box cond_rate other_label_rate
@@ -142,43 +144,52 @@ class Detector:
         self.logger.info('Searching threshold..')
         min_val, thre1, thre2, fpb, tnb = len(self.result), 0, 0, 0, 0
         for ii in range(100):
-           for jj in range(100):
-               t1, t2 = 0.01*ii, 0.01*ii
-               fp, tn = 0, 0
-               for i in range(len(self.result)):
-                   if 'ori' in self.result[i][0] \
-                           and self.result[i][-2] > t1 \
-                           and self.result[i][-1] >= t2:
-                       fp += 1
-                   if 'patch' in self.result[i][0] \
-                           and (self.result[i][-2] <= t1 \
-                           or self.result[i][-1] < t2):
-                       tn += 1
-               if fp+tn < min_val:
-                   min_val, thre1, thre2, fpb, tnb = fp+tn, 0.01*ii, 0.01*jj, fp, tn
-               self.logger.info('thre1: {}, thre2: {}, fp: {}, tn: {}, total: {}'\
-                       .format(0.01*ii, 0.01*jj, fp, tn, (fp+tn)/len(self.result)))
+            for jj in range(100):
+                t1, t2 = 0.01*ii, 0.01*ii
+                fp, tn = 0, 0
+                for i in range(len(self.result)):
+                    if 'ori' in self.result[i][0] \
+                            and self.result[i][-2] > t1 \
+                            and self.result[i][-1] >= t2:
+                        fp += 1
+                    if 'patch' in self.result[i][0] \
+                            and (self.result[i][-2] <= t1
+                                 or self.result[i][-1] < t2):
+                        tn += 1
+                if fp+tn < min_val:
+                    min_val, thre1, thre2, fpb, tnb = fp+tn, 0.01*ii, 0.01*jj, fp, tn
+                self.logger.info('thre1: {}, thre2: {}, fp: {}, tn: {}, total: {}'
+                                 .format(0.01*ii, 0.01*jj, fp, tn, (fp+tn)/len(self.result)))
 
-        self.logger.info('Best Result: thre1: {}, thre2: {}, fp: {}, tn: {}, total: {}'\
-                .format(thre1, thre2, fpb, tnb, (fpb+tnb)/len(self.result)))
+        self.logger.info('Best Result: thre1: {}, thre2: {}, fp: {}, tn: {}, total: {}'
+                         .format(thre1, thre2, fpb, tnb, (fpb+tnb)/len(self.result)))
 
 
 def main():
-    logger = get_mylogger('log/detect_log')
-    detector = Detector('./result/attack/image_specific/ResNet18/ResNet18_10/', logger)
+    PATCH_SIZE = 7
+    logger = get_mylogger('log/detect_mdr/ResNet18_{}'.format(PATCH_SIZE))
+    detector = Detector(
+        './result/attack/image_specific/ResNet18/ResNet18_{}/'.format(PATCH_SIZE), logger)
 
     for i in range(10000):
         if i in detector.file_dict['ori_mdr']:
-            img_file = os.path.join(detector.file_dir, detector.file_dict['ori_img'][i])
-            mdr_file = os.path.join(detector.file_dir, detector.file_dict['ori_mdr'][i])
+            img_file = os.path.join(
+                detector.file_dir, detector.file_dict['ori_img'][i])
+            mdr_file = os.path.join(
+                detector.file_dir, detector.file_dict['ori_mdr'][i])
             target = int(img_file[:-4].split('_')[-1])
-            detector.detect(img_file, mdr_file, 200, target=target)
+            detector.detect(img_file, mdr_file, 200,
+                            target=target, square_size=12)
 
         if i in detector.file_dict['pat_mdr']:
-            img_file = os.path.join(detector.file_dir, detector.file_dict['pat_img'][i])
-            mdr_file = os.path.join(detector.file_dir, detector.file_dict['pat_mdr'][i])
-            detector.detect(img_file, mdr_file, 200, target=5)
+            img_file = os.path.join(
+                detector.file_dir, detector.file_dict['pat_img'][i])
+            mdr_file = os.path.join(
+                detector.file_dir, detector.file_dict['pat_mdr'][i])
+            detector.detect(img_file, mdr_file, 200, target=5, square_size=12)
     detector.search_thre()
+    logger.info("patch_size: %d" % PATCH_SIZE)
+
 
 if __name__ == '__main__':
     main()
