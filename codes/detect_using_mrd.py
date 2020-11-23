@@ -22,7 +22,7 @@ class Configuration():
             self.PATCH_SIZE)
         self.MODEL_NAME = './result/models/{}_{}/model_best.pth.tar'.format(
             self.ARCH, self.PATCH_SIZE)
-        self.TARGET_LABLE = 5
+        self.TARGET_LABLE = 5 
 
 
 def collect_images(filedir, filenum):
@@ -56,49 +56,69 @@ def mdr_vote(prob_grid, class_grid, file_idx='', prefix='', logger=None):
     for i in range(h-2):
         for j in range(w-2):
             tprob = prob_grid[i:i+3, j:j+3]
-            tcls  = class_grid[i:i+3, j:j+3]
+            tcls = class_grid[i:i+3, j:j+3]
             idx = np.argmin(tprob)
 
-            voting_grid[i, j] = tcls[idx//3, idx%3]
+            voting_grid[i, j] = tcls[idx//3, idx % 3]
             for k in range(9):
-                if tcls[k//3, k%3] != voting_grid[i, j]:
+                if tcls[k//3, k % 3] != voting_grid[i, j]:
                     voting_grid[i, j] = -1
                     break
                 else:
                     continue
 
-    pdb.set_trace()
+    # pdb.set_trace()
     freq = dict()
     for i in range(h-2):
         for j in range(w-2):
             val = int(voting_grid[i, j])
-            if val == -1: continue
+            if val == -1:
+                continue
             else:
-                if val in freq: freq[val] += 1
-                else:           freq[val]  = 1
+                if val in freq:
+                    freq[val] += 1
+                else:
+                    freq[val] = 1
     if logger:
-        logger.info('freq: {}'.format(sorted(freq.items(), key = lambda kv:kv[1], reverse=True)))
+        logger.info('freq: {}'.format(
+            sorted(freq.items(), key=lambda kv: kv[1], reverse=True)))
     else:
-        print('freq: ', sorted(freq.items(), key = lambda kv:kv[1], reverse=True))
-    if len(freq.keys()) == 1: return list(freq.keys())[0], voting_grid
+        print('freq: ', sorted(freq.items(),
+                               key=lambda kv: kv[1], reverse=True))
+    if len(freq.keys()) == 1:
+        return list(freq.keys())[0], voting_grid
     elif len(freq.keys()) == 2:
         keys = list(freq.keys())
-        if freq[keys[0]] > freq[keys[1]]: return keys[1], voting_grid
-        else:                            return keys[0], voting_grid
+        if freq[keys[0]] > freq[keys[1]]:
+            return keys[1], voting_grid
+        else:
+            return keys[0], voting_grid
     return -1, voting_grid
+
 
 def detect_patch(vote_grid):
     has_patch = "False"
     original_cls = -1
+    # pdb.set_trace()
+    vote_list = list(Counter(vote_grid.reshape(-1)))
+    if -1 in vote_list:
+        vote_list.remove(-1)
+    if len(vote_list) >= 2:
+        has_patch = "True" 
+        original_cls = vote_list[-1]
+    else:
+        has_patch = "False"
+        original_cls = vote_list[0]
     return has_patch, original_cls
-if __name__ == '__main__':
 
+
+if __name__ == '__main__':
     calc_num = 0
 
     config = Configuration()
 
     # Set logger to record the process
-    logger = get_mylogger('./log/detect_mdr/ResNet18_%d' % config.PATCH_SIZE)
+    logger = get_mylogger('./log/detect_mrd/ResNet18_%d' % config.PATCH_SIZE)
     logger.info("Parameters: %s" % (config.__dict__))
 
     # Get images
@@ -133,11 +153,13 @@ if __name__ == '__main__':
         # GoundTruth
         true_label = int(re.split('_|\.', fimages['benign'][i])[-2])
         if true_label != benign_cls:
-            continue
+            # continue
+            pass
 
         # 删去label 5
         if true_label == 5:
-            continue
+            # continue
+            pass
         # get images that can attack precisely
         fimg = os.path.join(config.FILEDIR, fimages['patch'][i])
         poisoned_img = torch.load(fimg[:-4]+'.pth').cuda()
@@ -145,12 +167,13 @@ if __name__ == '__main__':
         prob, poisoned_cls = torch.max(output, 1)
         prob, poisoned_cls = prob.cpu().detach().numpy(), poisoned_cls.cpu().detach().numpy()
         if poisoned_cls != config.TARGET_LABLE:
-            continue
+            # continue
+            pass
         total_num += 1
 
         for key in keys:
             fimg = os.path.join(config.FILEDIR, fimages[key][i])
-            mdr_file = torch.load(fimg[:-4] + '_mdr.pth')
+            mdr_file = torch.load(fimg[:-4] + '_mrd.pth')
 
             # Predicted label
             if key == "benign":
@@ -162,9 +185,9 @@ if __name__ == '__main__':
             unoccluded_cls = cls
             cls_grid = mdr_file['cls']
             prob_grid = mdr_file['prob']
-            _, vote_grid = mdr_vote(prob_grid, cls_grid)
+            vote_grid = mdr_file['vote']
+            # _, vote_grid = mdr_vote(prob_grid, cls_grid)
             has_patch, original_cls = detect_patch(vote_grid)
-
 
             # pdb.set_trace()
             if key == "patch" and has_patch == "True":
@@ -180,7 +203,8 @@ if __name__ == '__main__':
                 restore_patch += 1
             if key == "benign" and original_cls == true_label:
                 restore_benign += 1
-
+                
+    logger.info("Mdr method")
     logger.info("Used Image Quantity: %d" % total_num)
     logger.info("Detect tp:%.3f fn:%.3f fp:%.3f tn:%.3f" %
                 (detect_tp/total_num, detect_fn/total_num, detect_fp/total_num, detect_tn/total_num))

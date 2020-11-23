@@ -1,16 +1,16 @@
-import os
-import re
-import pdb
-import torch
-import models
 import logging
+import os
+import pdb
+import re
+from collections import Counter
 
 import numpy as np
+import torch
 import torch.nn.functional as F
-
 from tqdm import tqdm, trange
+
+import models
 from mylogger import get_mylogger
-from collections import Counter
 
 
 class Configuration():
@@ -22,12 +22,12 @@ class Configuration():
             self.PATCH_SIZE)
         self.MODEL_NAME = './result/models/{}_{}/model_best.pth.tar'.format(
             self.ARCH, self.PATCH_SIZE)
-        self.TOPK = 14
-        self.TOPK_ALPHA1 = 0.7
+        self.TOPK = 10
+        self.TOPK_ALPHA1 = 0.8
         self.TOPK_ALPHA2 = 0.3
-        self.BOX_SIZE = self.PATCH_SIZE + 2
+        self.BOX_SIZE = self.PATCH_SIZE
         self.TARGET_LABLE = 5
-        self.NMS = False
+        self.NMS = True
 
         # 【patch,benign]
         self.method1 = [0, 0]
@@ -81,7 +81,7 @@ def nms(idx, config, threshold=0.4):
     return nms_list[:]
 
 
-def detect_patch(topk_map, mdr_file, unoccluded_cls, config, key):
+def detect_patch(topk_map, mdr_file, unoccluded_cls, config, key, fimg):
 
     cls_grid = mdr_file['cls']
 
@@ -111,7 +111,7 @@ def detect_patch(topk_map, mdr_file, unoccluded_cls, config, key):
         original_cls = unoccluded_cls
         config.method2[1] += 1
     else:
-        _, idx = torch.topk(out.view(-1), 5)
+        _, idx = torch.topk(out.view(-1), 14)
         idx = idx.cpu().detach().numpy()
         idx_list = []
         for i in range(len(idx)):
@@ -130,13 +130,18 @@ def detect_patch(topk_map, mdr_file, unoccluded_cls, config, key):
         for i in range(len(idx)):
             # pdb.set_trace()
             occl_cls.append(cls_grid[idx[i][0]][idx[i][1]])
-        if key == "patch":
-            pdb.set_trace()
         collect_words = Counter(occl_cls)
+
+        if key == "patch":
+            # pdb.set_trace()
+            pass
 
         # all the occluded images predict the same label;
         # so the image is benign.
         if len(collect_words.keys()) == 1 and list(collect_words)[0] == unoccluded_cls:
+            if key == "patch":
+                # pdb.set_trace()
+                pass
             has_patch = "False"
             original_cls = unoccluded_cls
             config.method3[1] += 1
@@ -209,7 +214,7 @@ if __name__ == '__main__':
 
         for key in keys:
             fimg = os.path.join(config.FILEDIR, fimages[key][i])
-            mdr_file = torch.load(fimg[:-4] + '_mdr.pth')
+            mdr_file = torch.load(fimg[:-4] + '_mrd.pth')
 
             # Predicted label
             if key == "benign":
@@ -237,7 +242,7 @@ if __name__ == '__main__':
             # Recover from average value
             out = out * config.BOX_SIZE * config.BOX_SIZE
             has_patch, original_cls = detect_patch(
-                out, mdr_file, unoccluded_cls, config, key)
+                out, mdr_file, unoccluded_cls, config, key, fimg)
 
             # pdb.set_trace()
             if key == "patch" and has_patch == "True":

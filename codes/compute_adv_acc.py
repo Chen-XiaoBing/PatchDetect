@@ -19,7 +19,7 @@ def load_image(image_path: str, imagetype='ori'):
     for file in tqdm(filename):
         # pdb.set_trace()
         if file.split("/")[-1].startswith(imagetype):
-            if '_mdr' in file:
+            if '_mrd' in file:
                 continue
             adv_example = torch.load(file)
             adv_examples.append(adv_example)

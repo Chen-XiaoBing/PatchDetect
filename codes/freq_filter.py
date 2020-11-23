@@ -1,9 +1,9 @@
 # https://blog.csdn.net/qq_27261889/article/details/90675051
 import cv2
-import numpy as np
 import matplotlib.pyplot as plt
-
+import numpy as np
 from scipy import fftpack
+
 
 def high_pass_filter(img, radius=80):
     r = radius

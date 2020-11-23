@@ -1,19 +1,21 @@
-import os
-import random
-import logging
 import argparse
+import logging
+import os
+import pdb
+import random
+
 import numpy as np
 import torch
 import torch.backends.cudnn as cudnn
+import torch.nn.functional as F
 import torchvision
-# import torchvision.models as models
-import models
 import torchvision.datasets as datasets
 import torchvision.transforms as transforms
-import torch.nn.functional as F
 from torch.autograd import Variable
 from torch.utils.data.sampler import SubsetRandomSampler
-import pdb
+
+# import torchvision.models as models
+import models
 
 
 class AttackConfig(object):
@@ -321,6 +323,7 @@ def main():
                    args.patch_size, i, label.numpy()[0])
         torchvision.utils.save_image(
             adv_image.data, saved_path, normalize=False)
+
 
 
 if __name__ == '__main__':

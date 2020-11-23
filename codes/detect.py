@@ -1,8 +1,8 @@
+import logging
 import os
 import pdb
-import logging
-import numpy as np
 
+import numpy as np
 import torch
 import torch.nn.functional as F
 
@@ -18,19 +18,19 @@ class Detector:
         files = os.listdir(self.file_dir)
 
         self.file_dict = dict()
-        ori_img, pat_img, ori_mdr, pat_mdr = dict(), dict(), dict(), dict()
+        ori_img, pat_img, ori_mrd, pat_mrd = dict(), dict(), dict(), dict()
         for item in files:
             suffix_jpg = item.endswith('.jpg')
-            suffix_mdr_pth = item.endswith('_mdr.pth')
+            suffix_mrd_pth = item.endswith('_mrd.pth')
             prefix_ori = item.startswith('ori_')
             prefix_pat = item.startswith('patched_')
 
-            if suffix_mdr_pth and prefix_ori:
+            if suffix_mrd_pth and prefix_ori:
                 key = int(item.split('_')[3])
-                ori_mdr[key] = item
-            elif suffix_mdr_pth and prefix_pat:
+                ori_mrd[key] = item
+            elif suffix_mrd_pth and prefix_pat:
                 key = int(item.split('_')[3])
-                pat_mdr[key] = item
+                pat_mrd[key] = item
             elif suffix_jpg and prefix_ori:
                 key = int(item.split('_')[3])
                 ori_img[key] = item
@@ -40,10 +40,10 @@ class Detector:
 
         self.file_dict['ori_img'] = ori_img
         self.file_dict['pat_img'] = pat_img
-        self.file_dict['ori_mdr'] = ori_mdr
-        self.file_dict['pat_mdr'] = pat_mdr
+        self.file_dict['ori_mrd'] = ori_mrd
+        self.file_dict['pat_mrd'] = pat_mrd
 
-    def read_mdr(self, fname, key):
+    def read_mrd(self, fname, key):
         assert key in ['prob', 'cls', 'vote']
         if '/' not in fname:
             fname = os.path.join(self.file_dir, fname)
@@ -63,18 +63,18 @@ class Detector:
     def detect(self, fimg, fmdr, thre, target=5, square_size=70):
         # pdb.set_trace()
         cond_mat = get_condidate(fimg, thre=thre)
-        mdr_mat = self.read_mdr(fmdr, 'cls')
+        mdr_mat = self.read_mrd(fmdr, 'cls')
         # -1 denotes invalid value
-        sparse_mdr_mat = np.zeros(mdr_mat.shape) - 1
+        sparse_mrd_mat = np.zeros(mdr_mat.shape) - 1
         h, w = cond_mat.shape
         for i in range(h):
             for j in range(w):
                 if cond_mat[i, j] == 1:
                     ti = min(max(0, i-35), 154)
                     tj = min(max(0, j-35), 154)
-                    sparse_mdr_mat[ti, tj] = mdr_mat[ti, tj]
+                    sparse_mrd_mat[ti, tj] = mdr_mat[ti, tj]
 
-        h, w = sparse_mdr_mat.shape
+        h, w = sparse_mrd_mat.shape
         # pdb.set_trace()
         cond_nr = np.zeros((h-square_size+1, w-square_size+1)).astype(int)
         other_nr = np.zeros((h-square_size+1, w-square_size+1)).astype(int)
@@ -84,9 +84,9 @@ class Detector:
         #         t_cond_nr, t_other_nr = 0, 0
         #         for ii in range(square_size):
         #             for jj in range(square_size):
-        #                 if sparse_mdr_mat[i+ii, j+jj] != -1:
+        #                 if sparse_mrd_mat[i+ii, j+jj] != -1:
         #                     t_cond_nr += 1
-        #                     if sparse_mdr_mat[i+ii, j+jj] != 859:
+        #                     if sparse_mrd_mat[i+ii, j+jj] != 859:
         #                         t_other_nr += 1
         #         cond_nr[i, j] = t_cond_nr
         #         other_nr[i, j] = t_other_nr
@@ -96,37 +96,37 @@ class Detector:
                     t_cond_nr, t_other_nr = 0, 0
                     for ii in range(square_size):
                         for jj in range(square_size):
-                            if sparse_mdr_mat[i+ii, j+jj] != -1:
+                            if sparse_mrd_mat[i+ii, j+jj] != -1:
                                 t_cond_nr += 1
-                                if sparse_mdr_mat[i+ii, j+jj] != target:
+                                if sparse_mrd_mat[i+ii, j+jj] != target:
                                     t_other_nr += 1
                     f_cond_nr, f_other_nr = t_cond_nr, t_other_nr
                 elif i != 0 and j == 0:
                     for jj in range(square_size):
-                        if sparse_mdr_mat[i-1, jj] != -1:
+                        if sparse_mrd_mat[i-1, jj] != -1:
                             f_cond_nr -= 1
-                            if sparse_mdr_mat[i-1, jj] != target:
+                            if sparse_mrd_mat[i-1, jj] != target:
                                 f_other_nr -= 1
                     for jj in range(square_size):
-                        if sparse_mdr_mat[i+square_size-1, jj] != -1:
+                        if sparse_mrd_mat[i+square_size-1, jj] != -1:
                             f_cond_nr += 1
-                            if sparse_mdr_mat[i+square_size-1, jj] != target:
+                            if sparse_mrd_mat[i+square_size-1, jj] != target:
                                 f_other_nr += 1
                     t_cond_nr, t_other_nr = f_cond_nr, f_other_nr
                 else:
                     for ii in range(square_size):
-                        if sparse_mdr_mat[i+ii, j+square_size-1] != -1:
+                        if sparse_mrd_mat[i+ii, j+square_size-1] != -1:
                             t_cond_nr += 1
-                            if sparse_mdr_mat[i+ii, j+square_size-1] != target:
+                            if sparse_mrd_mat[i+ii, j+square_size-1] != target:
                                 t_other_nr += 1
                 cond_nr[i, j], other_nr[i, j] = t_cond_nr, t_other_nr
                 for ii in range(square_size):
-                    if sparse_mdr_mat[i+ii, j] != -1:
+                    if sparse_mrd_mat[i+ii, j] != -1:
                         t_cond_nr -= 1
-                        if sparse_mdr_mat[i+ii, j] != target:
+                        if sparse_mrd_mat[i+ii, j] != target:
                             t_other_nr -= 1
 
-        nr = np.count_nonzero(sparse_mdr_mat+1)
+        nr = np.count_nonzero(sparse_mrd_mat+1)
 
         ind = np.unravel_index(np.argsort(cond_nr, axis=None), cond_nr.shape)
         tcond_nr = cond_nr[ind[0][-1]][ind[1][-1]]
@@ -167,25 +167,25 @@ class Detector:
 
 def main():
     PATCH_SIZE = 7
-    logger = get_mylogger('log/detect_mdr/ResNet18_{}'.format(PATCH_SIZE))
+    logger = get_mylogger('log/detect_mrd/ResNet18_{}'.format(PATCH_SIZE))
     detector = Detector(
         './result/attack/image_specific/ResNet18/ResNet18_{}/'.format(PATCH_SIZE), logger)
 
     for i in range(10000):
-        if i in detector.file_dict['ori_mdr']:
+        if i in detector.file_dict['ori_mrd']:
             img_file = os.path.join(
                 detector.file_dir, detector.file_dict['ori_img'][i])
             mdr_file = os.path.join(
-                detector.file_dir, detector.file_dict['ori_mdr'][i])
+                detector.file_dir, detector.file_dict['ori_mrd'][i])
             target = int(img_file[:-4].split('_')[-1])
             detector.detect(img_file, mdr_file, 200,
                             target=target, square_size=12)
 
-        if i in detector.file_dict['pat_mdr']:
+        if i in detector.file_dict['pat_mrd']:
             img_file = os.path.join(
                 detector.file_dir, detector.file_dict['pat_img'][i])
             mdr_file = os.path.join(
-                detector.file_dir, detector.file_dict['pat_mdr'][i])
+                detector.file_dir, detector.file_dict['pat_mrd'][i])
             detector.detect(img_file, mdr_file, 200, target=5, square_size=12)
     detector.search_thre()
     logger.info("patch_size: %d" % PATCH_SIZE)
